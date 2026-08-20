@@ -1,0 +1,14 @@
+{
+  "name": "coupled-files",
+  "version": "0.1.0",
+  "description": "Finds which files in a git history tend to change together",
+  "license": "MIT",
+  "type": "module",
+  "bin": {
+    "coupled-files": "dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js"
+  }
+}
