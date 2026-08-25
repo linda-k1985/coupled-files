@@ -55,6 +55,10 @@ descending.
 - `--min=N` only show pairs that changed together at least N times
   (default 2)
 - `--top=N` show at most N pairs (default 20)
+- `--max-files=N` skip commits that touch more than N files (default 100).
+  Mass renames and formatter runs touch hundreds of unrelated files and
+  turn every one of them into a pair, which drowns out real coupling.
+  Skipped commits are counted and reported on stderr.
 
 ## building
 
@@ -68,7 +72,6 @@ node dist/index.js
 
 ## limitations right now
 
-Very large commits (mass renames, formatter runs across the whole repo)
-produce a lot of pairs and will drown out the meaningful ones. Filtering
-those out, and reading straight from a `.git` directory without a manual
-`git log` step first, are both still open.
+There's no `--json` output mode and no `--since`/`--until` date filtering
+yet, and no way to read straight from a `.git` directory without a manual
+`git log` step first.
