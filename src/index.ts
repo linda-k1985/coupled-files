@@ -6,6 +6,7 @@ interface Options {
   min: number;
   top: number;
   maxFiles: number;
+  json: boolean;
   paths: string[];
 }
 
@@ -13,7 +14,7 @@ function parseArgs(argv: string[]): Options {
   // 100 is generous enough for a real change touching several modules
   // but low enough to drop the mass-rename and formatter-run commits
   // that would otherwise flood the pair counts with noise.
-  const options: Options = { min: 2, top: 20, maxFiles: 100, paths: [] };
+  const options: Options = { min: 2, top: 20, maxFiles: 100, json: false, paths: [] };
 
   for (const arg of argv) {
     if (arg.startsWith("--min=")) {
@@ -22,6 +23,8 @@ function parseArgs(argv: string[]): Options {
       options.top = Number(arg.slice("--top=".length));
     } else if (arg.startsWith("--max-files=")) {
       options.maxFiles = Number(arg.slice("--max-files=".length));
+    } else if (arg === "--json") {
+      options.json = true;
     } else {
       options.paths.push(arg);
     }
@@ -80,6 +83,15 @@ function main(): void {
 
   if (skipped > 0) {
     console.error(`skipped ${skipped} commit(s) touching more than ${options.maxFiles} files`);
+  }
+
+  if (options.json) {
+    const pairs = ranked.map(([key, count]) => {
+      const [a, b] = key.split(" ");
+      return { count, files: [a, b] };
+    });
+    console.log(JSON.stringify({ pairs, skipped }));
+    return;
   }
 
   if (ranked.length === 0) {

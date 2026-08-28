@@ -59,6 +59,10 @@ descending.
   Mass renames and formatter runs touch hundreds of unrelated files and
   turn every one of them into a pair, which drowns out real coupling.
   Skipped commits are counted and reported on stderr.
+- `--json` print `{"pairs": [...], "skipped": N}` on stdout instead of
+  tab-separated lines. Each entry in `pairs` is `{"count": N, "files": [a, b]}`.
+  The skipped-commit count is repeated here for scripts that don't want to
+  parse stderr; the plain-text stderr warning still prints either way.
 
 ## building
 
@@ -72,6 +76,5 @@ node dist/index.js
 
 ## limitations right now
 
-There's no `--json` output mode and no `--since`/`--until` date filtering
-yet, and no way to read straight from a `.git` directory without a manual
-`git log` step first.
+There's no `--since`/`--until` date filtering yet, and no way to read
+straight from a `.git` directory without a manual `git log` step first.
