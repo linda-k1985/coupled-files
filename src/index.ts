@@ -7,6 +7,8 @@ interface Options {
   top: number;
   maxFiles: number;
   json: boolean;
+  since: string | null;
+  until: string | null;
   paths: string[];
 }
 
@@ -14,7 +16,15 @@ function parseArgs(argv: string[]): Options {
   // 100 is generous enough for a real change touching several modules
   // but low enough to drop the mass-rename and formatter-run commits
   // that would otherwise flood the pair counts with noise.
-  const options: Options = { min: 2, top: 20, maxFiles: 100, json: false, paths: [] };
+  const options: Options = {
+    min: 2,
+    top: 20,
+    maxFiles: 100,
+    json: false,
+    since: null,
+    until: null,
+    paths: [],
+  };
 
   for (const arg of argv) {
     if (arg.startsWith("--min=")) {
@@ -25,12 +35,25 @@ function parseArgs(argv: string[]): Options {
       options.maxFiles = Number(arg.slice("--max-files=".length));
     } else if (arg === "--json") {
       options.json = true;
+    } else if (arg.startsWith("--since=")) {
+      options.since = arg.slice("--since=".length);
+    } else if (arg.startsWith("--until=")) {
+      options.until = arg.slice("--until=".length);
     } else {
       options.paths.push(arg);
     }
   }
 
   return options;
+}
+
+function parseDateOption(value: string, flag: string): Date {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    console.error(`invalid date for ${flag}: ${value}`);
+    process.exit(1);
+  }
+  return date;
 }
 
 function readInput(paths: string[]): string {
@@ -48,12 +71,18 @@ interface PairCounts {
   skipped: number;
 }
 
-function countPairs(text: string, maxFiles: number): PairCounts {
+function countPairs(text: string, maxFiles: number, since: Date | null, until: Date | null): PairCounts {
   const counts = new Map<string, number>();
   let skipped = 0;
 
-  for (const files of iterateCommits(text)) {
-    const unique = Array.from(new Set(files)).sort();
+  for (const commit of iterateCommits(text)) {
+    if (since || until) {
+      const commitDate = new Date(commit.date);
+      if (since && commitDate < since) continue;
+      if (until && commitDate > until) continue;
+    }
+
+    const unique = Array.from(new Set(commit.files)).sort();
 
     if (unique.length > maxFiles) {
       skipped++;
@@ -73,8 +102,10 @@ function countPairs(text: string, maxFiles: number): PairCounts {
 
 function main(): void {
   const options = parseArgs(process.argv.slice(2));
+  const since = options.since ? parseDateOption(options.since, "--since") : null;
+  const until = options.until ? parseDateOption(options.until, "--until") : null;
   const text = readInput(options.paths);
-  const { counts, skipped } = countPairs(text, options.maxFiles);
+  const { counts, skipped } = countPairs(text, options.maxFiles, since, until);
 
   const ranked = Array.from(counts.entries())
     .filter(([, count]) => count >= options.min)

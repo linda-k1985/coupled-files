@@ -17,27 +17,28 @@ repo, from CI, from an archive, whatever) and feed it to the tool over
 stdin or as a file argument. It expects the shape produced by:
 
 ```
-git log --name-only --pretty=format:'commit:%H'
+git log --name-only --pretty=format:'commit:%H %aI'
 ```
 
-That prints a `commit:<hash>` marker line before the list of files touched
-in each commit, with a blank line separating commits. `coupled-files`
-counts, for every commit, every pair of distinct files it touched, and
-reports the pairs with the highest counts.
+That prints a `commit:<hash> <author-date>` marker line before the list of
+files touched in each commit, with a blank line separating commits. The
+date is `%aI`, git's ISO 8601 author date, which `--since`/`--until` rely
+on. `coupled-files` counts, for every commit, every pair of distinct files
+it touched, and reports the pairs with the highest counts.
 
 ## usage
 
 Piped straight from git:
 
 ```
-git log --name-only --pretty=format:'commit:%H' | coupled-files
+git log --name-only --pretty=format:'commit:%H %aI' | coupled-files
 ```
 
 Or from a saved log, useful if you want to snapshot history from a
 machine that doesn't have the tool installed:
 
 ```
-git log --name-only --pretty=format:'commit:%H' > history.log
+git log --name-only --pretty=format:'commit:%H %aI' > history.log
 coupled-files history.log
 ```
 
@@ -63,6 +64,10 @@ descending.
   tab-separated lines. Each entry in `pairs` is `{"count": N, "files": [a, b]}`.
   The skipped-commit count is repeated here for scripts that don't want to
   parse stderr; the plain-text stderr warning still prints either way.
+- `--since=DATE` / `--until=DATE` only count commits with an author date on
+  or after / on or before `DATE`. `DATE` is anything `Date` in JavaScript
+  can parse, so plain `2024-01-15` and full ISO timestamps both work. An
+  unparseable date is reported on stderr and exits with status 1.
 
 ## building
 
@@ -76,5 +81,5 @@ node dist/index.js
 
 ## limitations right now
 
-There's no `--since`/`--until` date filtering yet, and no way to read
-straight from a `.git` directory without a manual `git log` step first.
+There's no way to read straight from a `.git` directory without a manual
+`git log` step first.
