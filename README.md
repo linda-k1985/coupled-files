@@ -79,6 +79,12 @@ tsc
 node dist/index.js
 ```
 
+Tests use Node's built-in test runner, so there's nothing extra to install:
+
+```
+npm test
+```
+
 ## limitations right now
 
 There's no way to read straight from a `.git` directory without a manual
