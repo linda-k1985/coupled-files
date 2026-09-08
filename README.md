@@ -68,6 +68,21 @@ descending.
   or after / on or before `DATE`. `DATE` is anything `Date` in JavaScript
   can parse, so plain `2024-01-15` and full ISO timestamps both work. An
   unparseable date is reported on stderr and exits with status 1.
+- `--git-dir=PATH` read commits straight from a repository's object
+  database instead of stdin or a saved log file. `PATH` can be a working
+  tree (containing a `.git` directory) or a bare/`.git` directory itself.
+  This walks every commit reachable from `HEAD`, diffs each one against
+  its first parent to find changed files (merge commits are skipped, same
+  as plain `git log --name-only`), and needs no `git log` step first:
+
+  ```
+  coupled-files --git-dir=.
+  ```
+
+  It only understands loose objects. Once a repo has been packed — after
+  `git gc`, or in most clones — its objects live in `.git/objects/pack/`
+  instead, and this option fails with an error pointing back at the
+  `git log` pipe as a fallback. Packfile support isn't implemented yet.
 
 ## building
 
@@ -87,5 +102,7 @@ npm test
 
 ## limitations right now
 
-There's no way to read straight from a `.git` directory without a manual
-`git log` step first.
+`--git-dir` only reads loose objects, so it won't work against a packed
+repository (see above). Renames are always counted as a delete of the old
+path plus an add of the new one, since neither the piped `git log` input
+nor `--git-dir`'s tree diffing does rename detection.

@@ -1,12 +1,12 @@
-import { iterateCommits } from "./parser.js";
+import { iterateCommits, type Commit } from "./parser.js";
 
 export interface PairCounts {
   counts: Map<string, number>;
   skipped: number;
 }
 
-export function countPairs(
-  text: string,
+export function countPairsFromCommits(
+  commits: Iterable<Commit>,
   maxFiles: number,
   since: Date | null,
   until: Date | null,
@@ -14,7 +14,7 @@ export function countPairs(
   const counts = new Map<string, number>();
   let skipped = 0;
 
-  for (const commit of iterateCommits(text)) {
+  for (const commit of commits) {
     if (since || until) {
       const commitDate = new Date(commit.date);
       if (since && commitDate < since) continue;
@@ -37,4 +37,13 @@ export function countPairs(
   }
 
   return { counts, skipped };
+}
+
+export function countPairs(
+  text: string,
+  maxFiles: number,
+  since: Date | null,
+  until: Date | null,
+): PairCounts {
+  return countPairsFromCommits(iterateCommits(text), maxFiles, since, until);
 }

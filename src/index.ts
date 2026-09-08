@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { readFileSync } from "node:fs";
-import { countPairs } from "./pairs.js";
+import { countPairs, countPairsFromCommits, type PairCounts } from "./pairs.js";
+import { readCommitsFromGitDir } from "./gitdir.js";
 
 interface Options {
   min: number;
@@ -9,6 +10,7 @@ interface Options {
   json: boolean;
   since: string | null;
   until: string | null;
+  gitDir: string | null;
   paths: string[];
 }
 
@@ -23,6 +25,7 @@ function parseArgs(argv: string[]): Options {
     json: false,
     since: null,
     until: null,
+    gitDir: null,
     paths: [],
   };
 
@@ -39,6 +42,8 @@ function parseArgs(argv: string[]): Options {
       options.since = arg.slice("--since=".length);
     } else if (arg.startsWith("--until=")) {
       options.until = arg.slice("--until=".length);
+    } else if (arg.startsWith("--git-dir=")) {
+      options.gitDir = arg.slice("--git-dir=".length);
     } else {
       options.paths.push(arg);
     }
@@ -70,8 +75,21 @@ function main(): void {
   const options = parseArgs(process.argv.slice(2));
   const since = options.since ? parseDateOption(options.since, "--since") : null;
   const until = options.until ? parseDateOption(options.until, "--until") : null;
-  const text = readInput(options.paths);
-  const { counts, skipped } = countPairs(text, options.maxFiles, since, until);
+
+  let pairCounts: PairCounts;
+  if (options.gitDir) {
+    try {
+      const commits = readCommitsFromGitDir(options.gitDir);
+      pairCounts = countPairsFromCommits(commits, options.maxFiles, since, until);
+    } catch (error) {
+      console.error((error as Error).message);
+      process.exit(1);
+    }
+  } else {
+    const text = readInput(options.paths);
+    pairCounts = countPairs(text, options.maxFiles, since, until);
+  }
+  const { counts, skipped } = pairCounts;
 
   const ranked = Array.from(counts.entries())
     .filter(([, count]) => count >= options.min)
