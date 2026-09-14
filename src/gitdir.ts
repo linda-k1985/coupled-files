@@ -1,14 +1,13 @@
 // Reads commits straight out of a .git directory's object database instead
-// of relying on a piped `git log` invocation. Only loose objects are
-// understood — once a repo has been packed (git gc, or most clones) its
-// objects live in .git/objects/pack/*.pack instead, and we don't parse
-// those yet. Callers get a clear error pointing at the git log fallback
-// rather than silently missing history.
+// of relying on a piped `git log` invocation. Objects are looked up as
+// loose files first, falling back to any packfile under objects/pack —
+// between them that covers a repo at any point after a clone or `git gc`.
 
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { inflateSync } from "node:zlib";
 import type { Commit } from "./parser.js";
+import { readLooseObject } from "./looseobject.js";
+import { readObjectFromPacks } from "./packfile.js";
 
 interface RawCommit {
   tree: string;
@@ -67,18 +66,15 @@ function resolveHead(gitDir: string): string {
 }
 
 function readObject(gitDir: string, sha: string): { type: string; content: Buffer } {
-  const path = join(gitDir, "objects", sha.slice(0, 2), sha.slice(2));
-  if (!existsSync(path)) {
-    throw new Error(
-      `object ${sha} isn't stored as a loose object, likely because the repo has been packed ` +
-        `(git gc or a normal clone does this). Reading packfiles directly isn't supported yet — ` +
-        `pipe "git log --name-only --pretty=format:'commit:%H %aI'" into the tool instead.`,
-    );
-  }
-  const raw = inflateSync(readFileSync(path));
-  const nullIndex = raw.indexOf(0);
-  const type = raw.subarray(0, nullIndex).toString("ascii").split(" ")[0];
-  return { type, content: raw.subarray(nullIndex + 1) };
+  const loose = readLooseObject(gitDir, sha);
+  if (loose) return loose;
+
+  const packed = readObjectFromPacks(gitDir, sha);
+  if (packed) return packed;
+
+  throw new Error(
+    `object ${sha} was not found as a loose object or in any packfile under ${join(gitDir, "objects")}`,
+  );
 }
 
 function parseTree(gitDir: string, sha: string): TreeEntry[] {

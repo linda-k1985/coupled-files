@@ -79,10 +79,11 @@ descending.
   coupled-files --git-dir=.
   ```
 
-  It only understands loose objects. Once a repo has been packed — after
-  `git gc`, or in most clones — its objects live in `.git/objects/pack/`
-  instead, and this option fails with an error pointing back at the
-  `git log` pipe as a fallback. Packfile support isn't implemented yet.
+  Objects are read whether they're loose or packed, so this works equally
+  well on a fresh clone (where `git gc` has already packed everything into
+  `.git/objects/pack/`) and on a repo with commits still sitting around as
+  loose files. Only version 2 pack indexes are understood, which is what
+  every `git repack`/`git gc` since 2005 produces.
 
 ## building
 
@@ -102,7 +103,6 @@ npm test
 
 ## limitations right now
 
-`--git-dir` only reads loose objects, so it won't work against a packed
-repository (see above). Renames are always counted as a delete of the old
-path plus an add of the new one, since neither the piped `git log` input
-nor `--git-dir`'s tree diffing does rename detection.
+Renames are always counted as a delete of the old path plus an add of the
+new one, since neither the piped `git log` input nor `--git-dir`'s tree
+diffing does rename detection.

@@ -49,6 +49,68 @@ function setHead(gitDir: string, commit: string): void {
   writeFileSync(join(gitDir, "refs", "heads", "main"), `${commit}\n`);
 }
 
+// Minimal pack builder covering only full (non-delta) objects, just enough
+// to prove readCommitsFromGitDir works against a repo with no loose objects
+// at all — the general packfile parsing, including delta resolution, has
+// its own tests in packfile.test.ts.
+function encodePackTypeAndSize(type: number, size: number): Buffer {
+  const bytes: number[] = [];
+  let firstByte = (type << 4) | (size & 0x0f);
+  size = Math.floor(size / 16);
+  if (size > 0) firstByte |= 0x80;
+  bytes.push(firstByte);
+  while (size > 0) {
+    let byte = size & 0x7f;
+    size = Math.floor(size / 128);
+    if (size > 0) byte |= 0x80;
+    bytes.push(byte);
+  }
+  return Buffer.from(bytes);
+}
+
+function writePack(gitDir: string, entries: { sha: string; type: "commit" | "tree"; content: Buffer }[]): void {
+  const typeCodes: Record<string, number> = { commit: 1, tree: 2 };
+  const packHeader = Buffer.alloc(12);
+  packHeader.write("PACK", 0, "ascii");
+  packHeader.writeUInt32BE(2, 4);
+  packHeader.writeUInt32BE(entries.length, 8);
+
+  const chunks: Buffer[] = [packHeader];
+  const offsets = new Map<string, number>();
+  let offset = 12;
+  for (const entry of entries) {
+    offsets.set(entry.sha, offset);
+    const typeHeader = encodePackTypeAndSize(typeCodes[entry.type], entry.content.length);
+    const compressed = deflateSync(entry.content);
+    chunks.push(typeHeader, compressed);
+    offset += typeHeader.length + compressed.length;
+  }
+  chunks.push(Buffer.alloc(20));
+  const pack = Buffer.concat(chunks);
+
+  const sorted = Array.from(offsets.entries()).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+  const count = sorted.length;
+  const fanout = new Array(256).fill(0);
+  for (const [sha] of sorted) {
+    for (let i = parseInt(sha.slice(0, 2), 16); i < 256; i++) fanout[i]++;
+  }
+  const idxHeader = Buffer.alloc(8);
+  idxHeader.writeUInt32BE(0xff744f63, 0);
+  idxHeader.writeUInt32BE(2, 4);
+  const fanoutBuf = Buffer.alloc(256 * 4);
+  for (let i = 0; i < 256; i++) fanoutBuf.writeUInt32BE(fanout[i], i * 4);
+  const shaBuf = Buffer.concat(sorted.map(([sha]) => Buffer.from(sha, "hex")));
+  const crcBuf = Buffer.alloc(count * 4);
+  const offsetBuf = Buffer.alloc(count * 4);
+  sorted.forEach(([, off], i) => offsetBuf.writeUInt32BE(off, i * 4));
+  const idx = Buffer.concat([idxHeader, fanoutBuf, shaBuf, crcBuf, offsetBuf, Buffer.alloc(40)]);
+
+  const packDir = join(gitDir, "objects", "pack");
+  mkdirSync(packDir, { recursive: true });
+  writeFileSync(join(packDir, "pack-test.pack"), pack);
+  writeFileSync(join(packDir, "pack-test.idx"), idx);
+}
+
 test("reads a root commit and reports every file in its tree", () => {
   const gitDir = makeGitDir();
   const tree = fakeSha("t1");
@@ -179,10 +241,63 @@ test("resolves HEAD through packed-refs when the loose ref file is gone", () => 
   assert.deepEqual(commits[0].files, ["a.ts"]);
 });
 
-test("raises a clear error when an object has been packed rather than left loose", () => {
+test("raises a clear error when an object is neither loose nor in a packfile", () => {
   const gitDir = makeGitDir();
   const missingCommit = fakeSha("cf");
   setHead(gitDir, missingCommit);
 
-  assert.throws(() => readCommitsFromGitDir(gitDir), /isn't stored as a loose object/);
+  assert.throws(() => readCommitsFromGitDir(gitDir), /was not found as a loose object or in any packfile/);
+});
+
+test("reads commits and trees straight out of a packfile, with no loose objects at all", () => {
+  const gitDir = makeGitDir();
+  const parentTree = fakeSha("t1");
+  const childTree = fakeSha("t2");
+  const parentCommit = fakeSha("c1");
+  const childCommit = fakeSha("c2");
+
+  const buildTreeContent = (entries: { mode: string; name: string; sha: string }[]): Buffer =>
+    Buffer.concat(
+      entries.map((entry) =>
+        Buffer.concat([Buffer.from(`${entry.mode} ${entry.name}\0`, "ascii"), Buffer.from(entry.sha, "hex")]),
+      ),
+    );
+  const buildCommitContent = (tree: string, parents: string[], authorLine: string): Buffer =>
+    Buffer.from(
+      `tree ${tree}\n${parents.map((p) => `parent ${p}\n`).join("")}author ${authorLine}\ncommitter ${authorLine}\n\nmessage\n`,
+      "utf8",
+    );
+
+  writePack(gitDir, [
+    {
+      sha: parentTree,
+      type: "tree",
+      content: buildTreeContent([{ mode: "100644", name: "a.ts", sha: fakeSha("a") }]),
+    },
+    {
+      sha: childTree,
+      type: "tree",
+      content: buildTreeContent([
+        { mode: "100644", name: "a.ts", sha: fakeSha("a") },
+        { mode: "100644", name: "b.ts", sha: fakeSha("b") },
+      ]),
+    },
+    {
+      sha: parentCommit,
+      type: "commit",
+      content: buildCommitContent(parentTree, [], "Jane Doe <jane@example.com> 0 +0000"),
+    },
+    {
+      sha: childCommit,
+      type: "commit",
+      content: buildCommitContent(childTree, [parentCommit], "Jane Doe <jane@example.com> 100 +0000"),
+    },
+  ]);
+  setHead(gitDir, childCommit);
+
+  const commits = readCommitsFromGitDir(gitDir);
+
+  assert.equal(commits.length, 2);
+  const child = commits.find((c) => c.date === "1970-01-01T00:01:40+00:00");
+  assert.deepEqual(child?.files, ["b.ts"]);
 });
