@@ -225,6 +225,44 @@ test("skips merge commits, matching plain git log --name-only", () => {
   assert.ok(!commits.some((c) => c.date === "1970-01-01T00:03:20+00:00"));
 });
 
+test("folds a moved file with unchanged content into a single rename entry", () => {
+  const gitDir = makeGitDir();
+  const parentTree = fakeSha("t1");
+  const childTree = fakeSha("t2");
+  const parentCommit = fakeSha("c1");
+  const childCommit = fakeSha("c2");
+
+  writeTree(gitDir, parentTree, [{ mode: "100644", name: "old.ts", sha: fakeSha("a") }]);
+  writeTree(gitDir, childTree, [{ mode: "100644", name: "new.ts", sha: fakeSha("a") }]);
+  writeCommit(gitDir, parentCommit, parentTree, [], "Jane Doe <jane@example.com> 0 +0000");
+  writeCommit(gitDir, childCommit, childTree, [parentCommit], "Jane Doe <jane@example.com> 100 +0000");
+  setHead(gitDir, childCommit);
+
+  const commits = readCommitsFromGitDir(gitDir);
+  const child = commits.find((c) => c.date === "1970-01-01T00:01:40+00:00");
+
+  assert.deepEqual(child?.files, ["new.ts"]);
+});
+
+test("leaves a moved-and-edited file as a separate delete and add", () => {
+  const gitDir = makeGitDir();
+  const parentTree = fakeSha("t1");
+  const childTree = fakeSha("t2");
+  const parentCommit = fakeSha("c1");
+  const childCommit = fakeSha("c2");
+
+  writeTree(gitDir, parentTree, [{ mode: "100644", name: "old.ts", sha: fakeSha("a") }]);
+  writeTree(gitDir, childTree, [{ mode: "100644", name: "new.ts", sha: fakeSha("b") }]);
+  writeCommit(gitDir, parentCommit, parentTree, [], "Jane Doe <jane@example.com> 0 +0000");
+  writeCommit(gitDir, childCommit, childTree, [parentCommit], "Jane Doe <jane@example.com> 100 +0000");
+  setHead(gitDir, childCommit);
+
+  const commits = readCommitsFromGitDir(gitDir);
+  const child = commits.find((c) => c.date === "1970-01-01T00:01:40+00:00");
+
+  assert.deepEqual(child?.files.sort(), ["new.ts", "old.ts"]);
+});
+
 test("resolves HEAD through packed-refs when the loose ref file is gone", () => {
   const gitDir = makeGitDir();
   const tree = fakeSha("t1");

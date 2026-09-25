@@ -21,6 +21,11 @@ interface TreeEntry {
   sha: string;
 }
 
+interface ChangedBlob {
+  path: string;
+  sha: string;
+}
+
 const DIRECTORY_MODE = "40000";
 
 function resolveGitDir(path: string): string {
@@ -136,13 +141,18 @@ function parseCommit(content: Buffer): RawCommit {
 // Mirrors `git log --name-only`'s default: paths whose blob or mode
 // changed between the two trees, recursing into subtrees, skipping any
 // subtree whose sha is unchanged. Type changes between a file and a
-// directory at the same path are not specially reconciled.
+// directory at the same path are not specially reconciled. Entries that
+// only exist on one side are split into `removed`/`added` rather than
+// dumped straight into `modified`, so the caller can pair them back up
+// into renames.
 function diffTrees(
   gitDir: string,
   treeSha: string | null,
   parentTreeSha: string | null,
   prefix: string,
-  files: string[],
+  modified: string[],
+  removed: ChangedBlob[],
+  added: ChangedBlob[],
 ): void {
   if (treeSha === parentTreeSha) return;
 
@@ -160,11 +170,60 @@ function diffTrees(
     const thereIsTree = there?.mode === DIRECTORY_MODE;
 
     if (hereIsTree || thereIsTree) {
-      diffTrees(gitDir, hereIsTree ? here!.sha : null, thereIsTree ? there!.sha : null, path, files);
-    } else {
-      files.push(path);
+      diffTrees(
+        gitDir,
+        hereIsTree ? here!.sha : null,
+        thereIsTree ? there!.sha : null,
+        path,
+        modified,
+        removed,
+        added,
+      );
+    } else if (here && there) {
+      modified.push(path);
+    } else if (here) {
+      added.push({ path, sha: here.sha });
+    } else if (there) {
+      removed.push({ path, sha: there.sha });
     }
   }
+}
+
+// Pairs up a removed path and an added path whose blob content is
+// identical byte-for-byte and folds them into a single touched path,
+// the way `git log -M --name-only` would collapse a plain rename. Only
+// exact content matches are treated as renames — a moved file that was
+// also edited in the same commit still shows up as a separate delete and
+// add, same as before.
+function foldRenames(removed: ChangedBlob[], added: ChangedBlob[]): string[] {
+  const addedBySha = new Map<string, ChangedBlob[]>();
+  for (const entry of added) {
+    const bucket = addedBySha.get(entry.sha);
+    if (bucket) bucket.push(entry);
+    else addedBySha.set(entry.sha, [entry]);
+  }
+
+  const renamedTo = new Set<string>();
+  const paths: string[] = [];
+
+  for (const entry of removed) {
+    const candidates = addedBySha.get(entry.sha);
+    const match = candidates?.find((candidate) => !renamedTo.has(candidate.path));
+    if (match) {
+      renamedTo.add(match.path);
+      paths.push(match.path);
+    } else {
+      paths.push(entry.path);
+    }
+  }
+
+  for (const entry of added) {
+    if (!renamedTo.has(entry.path)) {
+      paths.push(entry.path);
+    }
+  }
+
+  return paths;
 }
 
 export function readCommitsFromGitDir(path: string): Commit[] {
@@ -201,8 +260,11 @@ export function readCommitsFromGitDir(path: string): Commit[] {
     if (commit.parents.length > 1) continue;
 
     const parentTree = commit.parents.length === 1 ? loadCommit(commit.parents[0]).tree : null;
-    const files: string[] = [];
-    diffTrees(gitDir, commit.tree, parentTree, "", files);
+    const modified: string[] = [];
+    const removed: ChangedBlob[] = [];
+    const added: ChangedBlob[] = [];
+    diffTrees(gitDir, commit.tree, parentTree, "", modified, removed, added);
+    const files = modified.concat(foldRenames(removed, added));
     if (files.length > 0) {
       commits.push({ date: commit.date, files });
     }
