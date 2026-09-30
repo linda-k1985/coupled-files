@@ -85,12 +85,13 @@ descending.
   loose files. Only version 2 pack indexes are understood, which is what
   every `git repack`/`git gc` since 2005 produces.
 
-  A file that was moved without changing its content is detected as a
-  rename and counted as a single touched path, not a delete of the old
-  path plus an add of the new one. This is an exact match on blob
-  content, the same as `git log -M100% --name-only` would find. A file
-  that was moved and edited in the same commit doesn't match anything, so
-  it still shows up as a separate delete and add — see limitations below.
+  A moved file is detected as a rename and counted as a single touched
+  path, not a delete of the old path plus an add of the new one. Exact
+  blob matches are found first. Leftover deletes and adds are then
+  compared line by line, and a pair that shares at least half of its
+  bytes counts as a rename too, like `git log -M50% --name-only`. The
+  similarity pass is skipped for a commit with more than 2500 leftover
+  delete/add combinations, so a huge reshuffle only gets exact matches.
 
 ## building
 
@@ -113,6 +114,5 @@ npm test
 The piped `git log --name-only` path has no rename detection at all —
 `--name-only` prints a plain delete-and-add for a moved file regardless
 of `-M`, so there's nothing in the input to detect it from. `--git-dir`
-detects exact-content renames itself (see above), but a rename that also
-changes the file's content still comes through as a delete plus an add,
-the same as it always has.
+detects renames itself (see above), but the similarity threshold is fixed
+at 50% and can't be changed from the command line.

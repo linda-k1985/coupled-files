@@ -263,6 +263,50 @@ test("leaves a moved-and-edited file as a separate delete and add", () => {
   assert.deepEqual(child?.files.sort(), ["new.ts", "old.ts"]);
 });
 
+test("folds a moved file with a small edit into a single rename entry", () => {
+  const gitDir = makeGitDir();
+  const parentTree = fakeSha("t1");
+  const childTree = fakeSha("t2");
+  const parentCommit = fakeSha("c1");
+  const childCommit = fakeSha("c2");
+  const before = fakeSha("b1");
+  const after = fakeSha("b2");
+
+  writeLooseObject(gitDir, before, "blob", Buffer.from("one\ntwo\nthree\nfour\n"));
+  writeLooseObject(gitDir, after, "blob", Buffer.from("one\ntwo\nthree\nfive\n"));
+  writeTree(gitDir, parentTree, [{ mode: "100644", name: "old.ts", sha: before }]);
+  writeTree(gitDir, childTree, [{ mode: "100644", name: "new.ts", sha: after }]);
+  writeCommit(gitDir, parentCommit, parentTree, [], "Jane Doe <jane@example.com> 0 +0000");
+  writeCommit(gitDir, childCommit, childTree, [parentCommit], "Jane Doe <jane@example.com> 100 +0000");
+  setHead(gitDir, childCommit);
+
+  const child = readCommitsFromGitDir(gitDir).find((c) => c.date === "1970-01-01T00:01:40+00:00");
+
+  assert.deepEqual(child?.files, ["new.ts"]);
+});
+
+test("keeps a delete and an add apart when the contents are mostly different", () => {
+  const gitDir = makeGitDir();
+  const parentTree = fakeSha("t1");
+  const childTree = fakeSha("t2");
+  const parentCommit = fakeSha("c1");
+  const childCommit = fakeSha("c2");
+  const before = fakeSha("b1");
+  const after = fakeSha("b2");
+
+  writeLooseObject(gitDir, before, "blob", Buffer.from("one\ntwo\nthree\nfour\n"));
+  writeLooseObject(gitDir, after, "blob", Buffer.from("one\nsix\nseven\neight\n"));
+  writeTree(gitDir, parentTree, [{ mode: "100644", name: "old.ts", sha: before }]);
+  writeTree(gitDir, childTree, [{ mode: "100644", name: "new.ts", sha: after }]);
+  writeCommit(gitDir, parentCommit, parentTree, [], "Jane Doe <jane@example.com> 0 +0000");
+  writeCommit(gitDir, childCommit, childTree, [parentCommit], "Jane Doe <jane@example.com> 100 +0000");
+  setHead(gitDir, childCommit);
+
+  const child = readCommitsFromGitDir(gitDir).find((c) => c.date === "1970-01-01T00:01:40+00:00");
+
+  assert.deepEqual(child?.files.sort(), ["new.ts", "old.ts"]);
+});
+
 test("resolves HEAD through packed-refs when the loose ref file is gone", () => {
   const gitDir = makeGitDir();
   const tree = fakeSha("t1");

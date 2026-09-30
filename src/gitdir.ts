@@ -8,6 +8,7 @@ import { join } from "node:path";
 import type { Commit } from "./parser.js";
 import { readLooseObject } from "./looseobject.js";
 import { readObjectFromPacks } from "./packfile.js";
+import { profileLines, similarity, type LineProfile } from "./similarity.js";
 
 interface RawCommit {
   tree: string;
@@ -189,13 +190,21 @@ function diffTrees(
   }
 }
 
-// Pairs up a removed path and an added path whose blob content is
-// identical byte-for-byte and folds them into a single touched path,
-// the way `git log -M --name-only` would collapse a plain rename. Only
-// exact content matches are treated as renames — a moved file that was
-// also edited in the same commit still shows up as a separate delete and
-// add, same as before.
-function foldRenames(removed: ChangedBlob[], added: ChangedBlob[]): string[] {
+// Same default as git's -M: half the content has to survive.
+const RENAME_SIMILARITY_THRESHOLD = 0.5;
+
+// Comparing every leftover delete against every leftover add is quadratic
+// in blob reads, so a commit that shuffles a huge number of files skips the
+// similarity pass and keeps only the exact matches. git has the same kind
+// of cutoff (diff.renameLimit).
+const SIMILARITY_PAIR_LIMIT = 2500;
+
+// Pairs up removed and added paths and folds each pair into a single
+// touched path, the way `git log -M --name-only` collapses a rename. Exact
+// blob matches go first; whatever is left over is matched by content
+// similarity so a file that was moved and edited in the same commit still
+// counts as one rename. Blobs that can't be read are simply never similar.
+function foldRenames(gitDir: string, removed: ChangedBlob[], added: ChangedBlob[]): string[] {
   const addedBySha = new Map<string, ChangedBlob[]>();
   for (const entry of added) {
     const bucket = addedBySha.get(entry.sha);
@@ -204,25 +213,68 @@ function foldRenames(removed: ChangedBlob[], added: ChangedBlob[]): string[] {
   }
 
   const renamedTo = new Set<string>();
-  const paths: string[] = [];
+  const renamedFrom = new Set<string>();
 
   for (const entry of removed) {
     const candidates = addedBySha.get(entry.sha);
     const match = candidates?.find((candidate) => !renamedTo.has(candidate.path));
     if (match) {
       renamedTo.add(match.path);
-      paths.push(match.path);
-    } else {
-      paths.push(entry.path);
+      renamedFrom.add(entry.path);
     }
   }
 
-  for (const entry of added) {
-    if (!renamedTo.has(entry.path)) {
-      paths.push(entry.path);
+  const leftoverRemoved = removed.filter((entry) => !renamedFrom.has(entry.path));
+  const leftoverAdded = added.filter((entry) => !renamedTo.has(entry.path));
+  if (
+    leftoverRemoved.length > 0 &&
+    leftoverAdded.length > 0 &&
+    leftoverRemoved.length * leftoverAdded.length <= SIMILARITY_PAIR_LIMIT
+  ) {
+    const profiles = new Map<string, LineProfile | null>();
+    const profileOf = (sha: string): LineProfile | null => {
+      if (profiles.has(sha)) return profiles.get(sha)!;
+      let profile: LineProfile | null = null;
+      try {
+        const { type, content } = readObject(gitDir, sha);
+        if (type === "blob") profile = profileLines(content);
+      } catch {
+        profile = null;
+      }
+      profiles.set(sha, profile);
+      return profile;
+    };
+
+    const scored: { from: string; to: string; score: number }[] = [];
+    for (const from of leftoverRemoved) {
+      const fromProfile = profileOf(from.sha);
+      if (!fromProfile) continue;
+      for (const to of leftoverAdded) {
+        const toProfile = profileOf(to.sha);
+        if (!toProfile) continue;
+        const score = similarity(fromProfile, toProfile);
+        if (score >= RENAME_SIMILARITY_THRESHOLD) scored.push({ from: from.path, to: to.path, score });
+      }
+    }
+
+    // Best matches claim their files first so one popular target doesn't
+    // get taken by a weaker candidate.
+    scored.sort((a, b) => b.score - a.score);
+    for (const { from, to } of scored) {
+      if (renamedFrom.has(from) || renamedTo.has(to)) continue;
+      renamedFrom.add(from);
+      renamedTo.add(to);
     }
   }
 
+  // A rename is reported once, under its new path. The exact pass above
+  // recorded destinations, so emit every added path plus the removed paths
+  // that found no partner.
+  const paths: string[] = [];
+  for (const entry of removed) {
+    if (!renamedFrom.has(entry.path)) paths.push(entry.path);
+  }
+  for (const entry of added) paths.push(entry.path);
   return paths;
 }
 
@@ -264,7 +316,7 @@ export function readCommitsFromGitDir(path: string): Commit[] {
     const removed: ChangedBlob[] = [];
     const added: ChangedBlob[] = [];
     diffTrees(gitDir, commit.tree, parentTree, "", modified, removed, added);
-    const files = modified.concat(foldRenames(removed, added));
+    const files = modified.concat(foldRenames(gitDir, removed, added));
     if (files.length > 0) {
       commits.push({ date: commit.date, files });
     }
